@@ -793,6 +793,91 @@ function LeadSourcesView({ data }) {
                   </div>
                 </div>
 
+                {/* Eligibility Roster — who can and cannot call/run from this source */}
+                <div style={{ marginTop: '20px', padding: '16px', borderRadius: '6px', border: `1px solid ${T.borderLight}`, background: T.surface }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
+                    <Users size={14} color={T.red} />
+                    <span style={{ fontSize: '12px', fontWeight: '600', color: T.red, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                      Eligibility Roster — {item.source}
+                    </span>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                    {/* Outside Sales Eligibility */}
+                    <div>
+                      <div style={{ fontSize: '11px', color: T.muted, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '10px', fontWeight: '600' }}>
+                        Outside Sales Reps
+                      </div>
+                      {(() => {
+                        const eligibleNames = new Set(item.repsBySource.outsidePerf.map(r => r.name));
+                        const byMarket = {};
+                        OUTSIDE_REPS.forEach(r => {
+                          if (!byMarket[r.market]) byMarket[r.market] = [];
+                          byMarket[r.market].push({ ...r, eligible: eligibleNames.has(r.name) });
+                        });
+                        return Object.entries(byMarket).map(([market, reps]) => {
+                          const eligibleCount = reps.filter(r => r.eligible).length;
+                          return (
+                            <div key={market} style={{ marginBottom: '12px' }}>
+                              <div style={{ fontSize: '12px', color: T.accent, fontWeight: '500', marginBottom: '4px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span>{market}</span>
+                                <span style={{ fontSize: '11px', fontFamily: "'JetBrains Mono', monospace", color: T.dim }}>{eligibleCount}/{reps.length}</span>
+                              </div>
+                              {reps.map(r => (
+                                <div key={r.name} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '3px 0', fontSize: '13px' }}>
+                                  <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: r.eligible ? T.green : T.red, flexShrink: 0 }} />
+                                  <span style={{ color: r.eligible ? T.text : T.red, fontWeight: r.eligible ? '400' : '500' }}>
+                                    {r.name}
+                                  </span>
+                                  {(r.role === 'Closer' || r.role === 'Closer+GTR') && <Badge color={T.blue}>Closer</Badge>}
+                                  <span style={{ marginLeft: 'auto', fontSize: '11px', fontFamily: "'JetBrains Mono', monospace", color: r.eligible ? T.green : T.red }}>
+                                    {r.eligible ? 'ELIGIBLE' : 'NOT ELIGIBLE'}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        });
+                      })()}
+                    </div>
+                    {/* Inside Sales Eligibility */}
+                    <div>
+                      <div style={{ fontSize: '11px', color: T.muted, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '10px', fontWeight: '600' }}>
+                        Inside Sales Reps (Apt Setters)
+                      </div>
+                      {(() => {
+                        const eligibleNames = new Set(item.repsBySource.insidePerf.map(r => r.name));
+                        const byMarket = {};
+                        INSIDE_REPS.filter(r => r.role !== 'Manager').forEach(r => {
+                          if (!byMarket[r.market]) byMarket[r.market] = [];
+                          byMarket[r.market].push({ ...r, eligible: eligibleNames.has(r.name) });
+                        });
+                        return Object.entries(byMarket).map(([market, reps]) => {
+                          const eligibleCount = reps.filter(r => r.eligible).length;
+                          return (
+                            <div key={market} style={{ marginBottom: '12px' }}>
+                              <div style={{ fontSize: '12px', color: T.accent, fontWeight: '500', marginBottom: '4px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span>{market}</span>
+                                <span style={{ fontSize: '11px', fontFamily: "'JetBrains Mono', monospace", color: T.dim }}>{eligibleCount}/{reps.length}</span>
+                              </div>
+                              {reps.map(r => (
+                                <div key={r.name} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '3px 0', fontSize: '13px' }}>
+                                  <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: r.eligible ? T.green : T.red, flexShrink: 0 }} />
+                                  <span style={{ color: r.eligible ? T.text : T.red, fontWeight: r.eligible ? '400' : '500' }}>
+                                    {r.name}
+                                  </span>
+                                  <span style={{ marginLeft: 'auto', fontSize: '11px', fontFamily: "'JetBrains Mono', monospace", color: r.eligible ? T.green : T.red }}>
+                                    {r.eligible ? 'ELIGIBLE' : 'NOT ELIGIBLE'}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        });
+                      })()}
+                    </div>
+                  </div>
+                </div>
+
                 {/* Depth Chart — who should get the most leads from this source by market */}
                 <div style={{ marginTop: '20px', padding: '16px', borderRadius: '6px', border: `1px solid ${T.borderLight}`, background: T.surface }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
