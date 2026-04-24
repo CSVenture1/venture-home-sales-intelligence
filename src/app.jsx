@@ -1171,6 +1171,331 @@ function MarketOverviewView({ data }) {
   );
 }
 
+// ─── Appointment Assignment Intelligence ─────────────────────────────────────
+// Composite scoring: Performance (45%) + Eligibility (25%) + Distance (15%) + Availability (15%)
+// Recommends which outside rep should run a given appointment
+
+function generateRepDistances(market) {
+  // Simulated distances (miles) for each rep from a central appointment location in the market
+  const rng = seededRandom(market.length * 419 + 73);
+  const marketReps = OUTSIDE_REPS.filter(r => r.market === market);
+  return marketReps.map(r => {
+    const base = r.market === market ? rng() * 25 + 3 : rng() * 60 + 30;
+    return { name: r.name, distance: Math.round(base * 10) / 10 };
+  });
+}
+
+function AppointmentAssignmentView({ leadSourceData, outsideRepData }) {
+  const [selectedSource, setSelectedSource] = useState(LEAD_SOURCES[0]);
+  const [selectedMarket, setSelectedMarket] = useState(MARKETS[0]);
+  const [weightPerf, setWeightPerf] = useState(45);
+  const [weightElig, setWeightElig] = useState(25);
+  const [weightDist, setWeightDist] = useState(15);
+  const [weightAvail, setWeightAvail] = useState(15);
+
+  const rankings = useMemo(() => {
+    // Find the lead source data to check eligibility
+    const sourceData = leadSourceData.find(d => d.source === selectedSource);
+    const eligibleNames = sourceData ? new Set(sourceData.repsBySource.outsidePerf.map(r => r.name)) : new Set();
+
+    // Get reps in the selected market
+    const marketReps = OUTSIDE_REPS.filter(r => r.market === selectedMarket);
+    const distances = generateRepDistances(selectedMarket);
+    const distMap = {};
+    distances.forEach(d => { distMap[d.name] = d.distance; });
+
+    // Get overall rep data for performance metrics
+    const repDataMap = {};
+    outsideRepData.forEach(r => { repDataMap[r.name] = r; });
+
+    // Also get per-source performance if available
+    const sourceRepMap = {};
+    if (sourceData) {
+      sourceData.repsBySource.outsidePerf.forEach(r => { sourceRepMap[r.name] = r; });
+    }
+
+    // Simulated availability (appointments today / capacity)
+    const rng = seededRandom(selectedSource.length * 311 + selectedMarket.length * 47);
+
+    return marketReps.map(rep => {
+      const repData = repDataMap[rep.name] || {};
+      const sourceRep = sourceRepMap[rep.name];
+      const isEligible = eligibleNames.has(rep.name);
+      const dist = distMap[rep.name] || 30;
+
+      // Performance score (0-100): based on true net close % and cancel rate
+      const trueNet = sourceRep ? sourceRep.trueNetCloseRate : (repData.trueNetCloseRate || 0.2);
+      const cancelRate = sourceRep ? sourceRep.cancelRate : (repData.cancellationRate || 0.15);
+      const perfScore = Math.min(100, Math.max(0,
+        (trueNet / 0.5) * 70 + // Up to 70 pts for close rate
+        ((1 - cancelRate) / 1) * 30 // Up to 30 pts for low cancels
+      ));
+
+      // Eligibility score: 100 if eligible, 20 if not (still possible, just penalized)
+      const eligScore = isEligible ? 100 : 20;
+
+      // Distance score: closer = higher (inverse scale, max at 0 mi, 0 at 50+ mi)
+      const distScore = Math.max(0, Math.min(100, (1 - dist / 50) * 100));
+
+      // Availability score: simulated load factor
+      const todayAppts = Math.floor(rng() * 4);
+      const capacity = 4;
+      const availScore = Math.max(0, ((capacity - todayAppts) / capacity) * 100);
+
+      // Composite score (weighted)
+      const totalWeight = weightPerf + weightElig + weightDist + weightAvail;
+      const composite = (
+        perfScore * (weightPerf / totalWeight) +
+        eligScore * (weightElig / totalWeight) +
+        distScore * (weightDist / totalWeight) +
+        availScore * (weightAvail / totalWeight)
+      );
+
+      return {
+        name: rep.name,
+        role: rep.role,
+        market: rep.market,
+        trueNetCloseRate: trueNet,
+        cancelRate,
+        perfScore: Math.round(perfScore),
+        isEligible,
+        eligScore,
+        distance: dist,
+        distScore: Math.round(distScore),
+        todayAppts,
+        capacity,
+        availScore: Math.round(availScore),
+        composite: Math.round(composite * 10) / 10,
+        sourceSpecific: !!sourceRep,
+        runs: sourceRep ? sourceRep.runs : (repData.runs || 0),
+        closedWon: sourceRep ? sourceRep.closedWon : (repData.closedWon || 0),
+        csm: sourceRep ? sourceRep.csm : (repData.csm || 0),
+        projectedCloses: sourceRep ? sourceRep.projectedCloses : (repData.projectedCloses || 0),
+      };
+    }).sort((a, b) => b.composite - a.composite);
+  }, [selectedSource, selectedMarket, leadSourceData, outsideRepData, weightPerf, weightElig, weightDist, weightAvail]);
+
+  const topPick = rankings[0];
+  const eligibleCount = rankings.filter(r => r.isEligible).length;
+  const avgComposite = rankings.length > 0 ? rankings.reduce((s, r) => s + r.composite, 0) / rankings.length : 0;
+
+  return (
+    <div>
+      {/* KPIs */}
+      <div style={{ display: 'flex', gap: '16px', marginBottom: '24px', flexWrap: 'wrap' }}>
+        <KpiCard label="Recommended Rep" value={topPick?.name || '—'} subtext={`Score: ${topPick?.composite || 0}`} color={T.accent} icon={Zap} />
+        <KpiCard label="Reps in Market" value={rankings.length} subtext={`${eligibleCount} eligible for source`} icon={Users} />
+        <KpiCard label="Avg Composite" value={avgComposite.toFixed(1)} color={avgComposite > 65 ? T.green : avgComposite > 45 ? T.accent : T.red} icon={BarChart3} />
+        <KpiCard label="Top True Net %" value={topPick ? `${(topPick.trueNetCloseRate * 100).toFixed(0)}%` : '—'} color={topPick && topPick.trueNetCloseRate > 0.35 ? T.green : T.accent} icon={TrendingUp} />
+      </div>
+
+      {/* Controls */}
+      <div style={{ display: 'flex', gap: '12px', marginBottom: '20px', alignItems: 'center', flexWrap: 'wrap' }}>
+        <div>
+          <label style={{ fontSize: '11px', color: T.dim, textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: '4px' }}>Lead Source</label>
+          <select value={selectedSource} onChange={e => setSelectedSource(e.target.value)} style={{
+            background: T.surface, border: `1px solid ${T.border}`, borderRadius: '6px',
+            color: T.text, padding: '8px 12px', fontSize: '14px', fontFamily: "'Outfit', sans-serif", minWidth: '200px'
+          }}>
+            {LEAD_SOURCES.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </div>
+        <div>
+          <label style={{ fontSize: '11px', color: T.dim, textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: '4px' }}>Market</label>
+          <select value={selectedMarket} onChange={e => setSelectedMarket(e.target.value)} style={{
+            background: T.surface, border: `1px solid ${T.border}`, borderRadius: '6px',
+            color: T.text, padding: '8px 12px', fontSize: '14px', fontFamily: "'Outfit', sans-serif"
+          }}>
+            {MARKETS.map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
+        </div>
+      </div>
+
+      {/* Weight Sliders */}
+      <div style={{
+        background: T.surface, borderRadius: '8px', padding: '16px 20px', marginBottom: '20px',
+        border: `1px solid ${T.border}`, display: 'flex', gap: '24px', flexWrap: 'wrap', alignItems: 'center'
+      }}>
+        <span style={{ fontSize: '12px', color: T.muted, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Scoring Weights:</span>
+        {[
+          { label: 'Performance', value: weightPerf, set: setWeightPerf, color: T.green },
+          { label: 'Eligibility', value: weightElig, set: setWeightElig, color: T.blue },
+          { label: 'Distance', value: weightDist, set: setWeightDist, color: T.accent },
+          { label: 'Availability', value: weightAvail, set: setWeightAvail, color: T.purple },
+        ].map(w => (
+          <div key={w.label} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '12px', color: w.color, minWidth: '85px' }}>{w.label}</span>
+            <input type="range" min="0" max="100" value={w.value} onChange={e => w.set(Number(e.target.value))}
+              style={{ width: '80px', accentColor: w.color }} />
+            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '12px', color: T.text, minWidth: '28px' }}>{w.value}%</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Recommendation Card */}
+      {topPick && (
+        <div style={{
+          background: `linear-gradient(135deg, ${T.green}12, ${T.accent}08)`,
+          borderRadius: '8px', padding: '20px', marginBottom: '20px',
+          border: `1px solid ${T.green}40`
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+            <Zap size={18} color={T.accent} />
+            <span style={{ fontSize: '16px', fontWeight: '600', color: T.accent }}>
+              RECOMMENDED ASSIGNMENT
+            </span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '24px', flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ fontSize: '24px', fontWeight: '600', color: T.text }}>{topPick.name}</div>
+              <div style={{ display: 'flex', gap: '8px', marginTop: '6px', alignItems: 'center' }}>
+                {(topPick.role === 'Closer' || topPick.role === 'Closer+GTR') && <Badge color={T.blue}>Closer</Badge>}
+                {topPick.isEligible && <Badge color={T.green}>Eligible</Badge>}
+                {!topPick.isEligible && <Badge color={T.red}>Not Eligible</Badge>}
+                <Badge color={T.accent}>{topPick.market}</Badge>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '20px', marginLeft: 'auto' }}>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: '11px', color: T.dim, textTransform: 'uppercase', marginBottom: '4px' }}>Composite</div>
+                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '22px', fontWeight: '600', color: T.green }}>{topPick.composite}</div>
+              </div>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: '11px', color: T.dim, textTransform: 'uppercase', marginBottom: '4px' }}>True Net %</div>
+                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '22px', fontWeight: '600', color: getColor(topPick.trueNetCloseRate, 0.35, 0.25) }}>{(topPick.trueNetCloseRate * 100).toFixed(0)}%</div>
+              </div>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: '11px', color: T.dim, textTransform: 'uppercase', marginBottom: '4px' }}>Distance</div>
+                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '22px', fontWeight: '600', color: T.accent }}>{topPick.distance}mi</div>
+              </div>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: '11px', color: T.dim, textTransform: 'uppercase', marginBottom: '4px' }}>Today</div>
+                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '22px', fontWeight: '600', color: topPick.todayAppts < 3 ? T.green : T.red }}>{topPick.todayAppts}/{topPick.capacity}</div>
+              </div>
+            </div>
+          </div>
+          {/* Why this rep */}
+          <div style={{ marginTop: '14px', padding: '10px 12px', borderRadius: '4px', backgroundColor: T.surface, fontSize: '13px', lineHeight: '1.6', color: T.muted }}>
+            <span style={{ color: T.accent, fontWeight: '500' }}>Why:</span>{' '}
+            {topPick.name} scores highest with a composite of {topPick.composite} —
+            {topPick.perfScore >= 60 ? ` strong closing performance (${(topPick.trueNetCloseRate * 100).toFixed(0)}% true net close),` : ` moderate close rate (${(topPick.trueNetCloseRate * 100).toFixed(0)}% true net),`}
+            {topPick.isEligible ? ' eligible for this lead source,' : ' not currently eligible for this source (penalty applied),'}
+            {topPick.distance < 15 ? ` close proximity (${topPick.distance}mi),` : ` ${topPick.distance}mi from appointment,`}
+            {topPick.todayAppts <= 1 ? ' and has open availability today.' : ` and has ${topPick.capacity - topPick.todayAppts} remaining slots today.`}
+            {topPick.sourceSpecific && ` Has ${topPick.runs} runs on ${selectedSource} with ${topPick.closedWon} won + ${topPick.csm} CSMs.`}
+          </div>
+        </div>
+      )}
+
+      {/* Full Rankings Table */}
+      <div style={{ background: T.surface, borderRadius: '8px', overflow: 'hidden', border: `1px solid ${T.border}` }}>
+        <div style={{
+          display: 'grid', gridTemplateColumns: '0.4fr 1.8fr 0.8fr 0.7fr 0.7fr 0.7fr 0.7fr 0.8fr',
+          padding: '14px 20px', borderBottom: `1px solid ${T.border}`, backgroundColor: T.bg,
+          fontSize: '12px', fontWeight: '600', color: T.muted, textTransform: 'uppercase', letterSpacing: '0.5px'
+        }}>
+          <div style={{ textAlign: 'center' }}>Rank</div>
+          <div>Rep</div>
+          <div style={{ textAlign: 'center' }}>Perf</div>
+          <div style={{ textAlign: 'center' }}>Elig</div>
+          <div style={{ textAlign: 'center' }}>Dist</div>
+          <div style={{ textAlign: 'center' }}>Avail</div>
+          <div style={{ textAlign: 'center' }}>True Net %</div>
+          <div style={{ textAlign: 'center' }}>Composite</div>
+        </div>
+
+        {rankings.map((rep, idx) => {
+          const tier = idx === 0 ? 'top' : rep.composite >= 60 ? 'good' : rep.composite >= 40 ? 'ok' : 'avoid';
+          const tierColors = { top: T.green, good: T.text, ok: T.accent, avoid: T.red };
+          const tierBg = { top: T.green + '08', good: 'transparent', ok: 'transparent', avoid: T.red + '06' };
+          return (
+            <div key={rep.name} style={{
+              display: 'grid', gridTemplateColumns: '0.4fr 1.8fr 0.8fr 0.7fr 0.7fr 0.7fr 0.7fr 0.8fr',
+              padding: '12px 20px',
+              borderBottom: idx < rankings.length - 1 ? `1px solid ${T.border}` : 'none',
+              backgroundColor: tierBg[tier],
+              transition: 'background-color 0.15s'
+            }}
+              onMouseEnter={e => e.currentTarget.style.backgroundColor = T.surfaceHover}
+              onMouseLeave={e => e.currentTarget.style.backgroundColor = tierBg[tier]}
+            >
+              <div style={{ textAlign: 'center', fontFamily: "'JetBrains Mono', monospace", fontSize: '14px', fontWeight: '600', color: idx === 0 ? T.green : T.dim }}>
+                #{idx + 1}
+              </div>
+              <div style={{ fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px', color: tierColors[tier] }}>
+                {rep.name}
+                {(rep.role === 'Closer' || rep.role === 'Closer+GTR') && <Badge color={T.blue}>Closer</Badge>}
+                {idx === 0 && <Badge color={T.green}>Best Pick</Badge>}
+                {!rep.isEligible && <span style={{ fontSize: '11px', color: T.red, fontWeight: '500' }}>NOT ELIG</span>}
+              </div>
+              {/* Score breakdown bars */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+                <div style={{ width: '40px', height: '6px', backgroundColor: T.border, borderRadius: '3px', overflow: 'hidden' }}>
+                  <div style={{ width: `${rep.perfScore}%`, height: '100%', backgroundColor: T.green, borderRadius: '3px' }} />
+                </div>
+                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '11px', color: T.muted }}>{rep.perfScore}</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+                <div style={{ width: '40px', height: '6px', backgroundColor: T.border, borderRadius: '3px', overflow: 'hidden' }}>
+                  <div style={{ width: `${rep.eligScore}%`, height: '100%', backgroundColor: rep.isEligible ? T.blue : T.red, borderRadius: '3px' }} />
+                </div>
+                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '11px', color: rep.isEligible ? T.blue : T.red }}>{rep.isEligible ? 'Y' : 'N'}</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+                <div style={{ width: '40px', height: '6px', backgroundColor: T.border, borderRadius: '3px', overflow: 'hidden' }}>
+                  <div style={{ width: `${rep.distScore}%`, height: '100%', backgroundColor: T.accent, borderRadius: '3px' }} />
+                </div>
+                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '11px', color: T.muted }}>{rep.distance}mi</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+                <div style={{ width: '40px', height: '6px', backgroundColor: T.border, borderRadius: '3px', overflow: 'hidden' }}>
+                  <div style={{ width: `${rep.availScore}%`, height: '100%', backgroundColor: T.purple, borderRadius: '3px' }} />
+                </div>
+                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '11px', color: T.muted }}>{rep.todayAppts}/{rep.capacity}</span>
+              </div>
+              <div style={{ textAlign: 'center' }}>
+                <Pct value={rep.trueNetCloseRate} good={0.35} warning={0.25} />
+              </div>
+              <div style={{ textAlign: 'center' }}>
+                <span style={{
+                  fontFamily: "'JetBrains Mono', monospace", fontSize: '16px', fontWeight: '700',
+                  color: rep.composite >= 65 ? T.green : rep.composite >= 45 ? T.accent : T.red
+                }}>
+                  {rep.composite}
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Score Breakdown Legend */}
+      <div style={{
+        marginTop: '16px', background: T.surface, borderRadius: '8px', padding: '14px 20px',
+        border: `1px solid ${T.border}`, display: 'flex', gap: '24px', flexWrap: 'wrap', alignItems: 'center'
+      }}>
+        <span style={{ fontSize: '12px', color: T.muted, fontWeight: '600' }}>Score Components:</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <div style={{ width: '12px', height: '6px', backgroundColor: T.green, borderRadius: '3px' }} />
+          <span style={{ fontSize: '12px', color: T.muted }}>Performance — true net close % + cancel rate</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <div style={{ width: '12px', height: '6px', backgroundColor: T.blue, borderRadius: '3px' }} />
+          <span style={{ fontSize: '12px', color: T.muted }}>Eligibility — has worked this lead source before</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <div style={{ width: '12px', height: '6px', backgroundColor: T.accent, borderRadius: '3px' }} />
+          <span style={{ fontSize: '12px', color: T.muted }}>Distance — proximity to appointment</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <div style={{ width: '12px', height: '6px', backgroundColor: T.purple, borderRadius: '3px' }} />
+          <span style={{ fontSize: '12px', color: T.muted }}>Availability — remaining capacity today</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main App ────────────────────────────────────────────────────────────────
 function App() {
   const [activeView, setActiveView] = useState('lead-sources');
@@ -1183,7 +1508,8 @@ function App() {
   const views = [
     { id: 'lead-sources', label: 'Lead Sources', icon: BarChart3 },
     { id: 'rep-performance', label: 'Rep Performance', icon: Users },
-    { id: 'market-overview', label: 'Market Overview', icon: MapPin }
+    { id: 'market-overview', label: 'Market Overview', icon: MapPin },
+    { id: 'apt-assignment', label: 'Apt Assignment Intel', icon: Zap }
   ];
 
   return (
@@ -1240,6 +1566,7 @@ function App() {
         {activeView === 'lead-sources' && <LeadSourcesView data={leadSourceData} />}
         {activeView === 'rep-performance' && <RepPerformanceView insideData={insideRepData} outsideData={outsideRepData} />}
         {activeView === 'market-overview' && <MarketOverviewView data={marketData} />}
+        {activeView === 'apt-assignment' && <AppointmentAssignmentView leadSourceData={leadSourceData} outsideRepData={outsideRepData} />}
       </div>
     </div>
   );
