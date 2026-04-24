@@ -182,13 +182,16 @@ function generateRepsBySource(sourceIndex) {
     usedOutside.add(idx);
     const rep = OUTSIDE_REPS[idx];
     const runs = Math.floor(rng() * 30) + 5;
-    const netCloseRate = rng() * 0.4 + 0.1;     // 10-50%
+    const closedWon = Math.floor(runs * (rng() * 0.3 + 0.08));  // 8-38% closed won
+    const csm = Math.floor(rng() * Math.max(runs * 0.25, 1)) + (runs > 15 ? 1 : 0); // upcoming contract signing meetings
+    const csmCloseRate = rng() * 0.4 + 0.3;  // 30-70% of CSMs convert
+    const projectedCloses = closedWon + Math.round(csm * csmCloseRate);
+    const trueNetCloseRate = projectedCloses / runs;
     const cancelRate = rng() * 0.25 + 0.03;
-    const closes = Math.floor(runs * netCloseRate);
-    const cancels = Math.floor(closes * cancelRate);
+    const cancels = Math.floor(closedWon * cancelRate);
     outsidePerf.push({
-      name: rep.name, market: rep.market,
-      runs, closes, cancels, netCloseRate, cancelRate,
+      name: rep.name, market: rep.market, role: rep.role,
+      runs, closedWon, csm, csmCloseRate, projectedCloses, trueNetCloseRate, cancelRate, cancels,
     });
   }
 
@@ -201,31 +204,32 @@ function generateInsights(sourceData, repsBySource) {
   const insights = []; // { type: 'red'|'amber'|'green', text: string }
   const { insidePerf, outsidePerf } = repsBySource;
 
-  // ── Outside rep flags ──────────────────────────────────────────────────
-  // Flag: outside reps with 10+ runs and < 25% net close
-  const lowCloseOutside = outsidePerf.filter(r => r.runs >= 10 && r.netCloseRate < 0.25);
+  // ── Outside rep flags (using True Net Close %) ──────────────────────
+  // True Net Close = (Closed Won + projected CSM conversions) / Runs
+  // Flag: outside reps with 10+ runs and < 25% true net close
+  const lowCloseOutside = outsidePerf.filter(r => r.runs >= 10 && r.trueNetCloseRate < 0.25);
   if (lowCloseOutside.length > 0) {
-    const names = lowCloseOutside.map(r => `${r.name} (${(r.netCloseRate * 100).toFixed(0)}% on ${r.runs} runs)`).join(', ');
+    const names = lowCloseOutside.map(r => `${r.name} (${(r.trueNetCloseRate * 100).toFixed(0)}% true net on ${r.runs} runs — ${r.closedWon} won + ${Math.round(r.csm * r.csmCloseRate)} projected from ${r.csm} CSMs)`).join(', ');
     insights.push({
       type: 'red',
-      text: `Outside reps with 10+ run sample below 25% net close: ${names}. Review call recordings for objection handling gaps and consider ride-alongs with a top closer.`
+      text: `Outside reps with 10+ run sample below 25% true net close: ${names}. Review call recordings for objection handling gaps and consider ride-alongs with a top closer.`
     });
   }
 
   // Flag: outside reps with high cancel rate (>20%)
   const highCancelOutside = outsidePerf.filter(r => r.runs >= 8 && r.cancelRate > 0.20);
   if (highCancelOutside.length > 0) {
-    const names = highCancelOutside.map(r => `${r.name} (${(r.cancelRate * 100).toFixed(0)}% cancel on ${r.closes} deals)`).join(', ');
+    const names = highCancelOutside.map(r => `${r.name} (${(r.cancelRate * 100).toFixed(0)}% cancel on ${r.closedWon} deals)`).join(', ');
     insights.push({
       type: 'red',
       text: `High cancellation reps on this source: ${names}. May indicate pressure-closing or poor expectation-setting during the sit.`
     });
   }
 
-  // Flag: outside reps crushing it (10+ runs, >40% net)
-  const topCloseOutside = outsidePerf.filter(r => r.runs >= 10 && r.netCloseRate > 0.40);
+  // Flag: outside reps crushing it (10+ runs, >40% true net)
+  const topCloseOutside = outsidePerf.filter(r => r.runs >= 10 && r.trueNetCloseRate > 0.40);
   if (topCloseOutside.length > 0) {
-    const names = topCloseOutside.map(r => `${r.name} (${(r.netCloseRate * 100).toFixed(0)}% on ${r.runs} runs)`).join(', ');
+    const names = topCloseOutside.map(r => `${r.name} (${(r.trueNetCloseRate * 100).toFixed(0)}% true net on ${r.runs} runs — ${r.closedWon} won + ${Math.round(r.csm * r.csmCloseRate)} projected)`).join(', ');
     insights.push({
       type: 'green',
       text: `Top closers on this source: ${names}. Study their approach — what objection handling and value framing are they using that others aren't?`
@@ -382,13 +386,24 @@ function generateRepData(reps, type) {
     const totalLeads = Math.floor(rng() * 60) + 20;
     const leadToSet = type === 'inside' ? rng() * 0.3 + 0.2 : null;
     const setToSit = rng() * 0.2 + 0.65;
-    const sitToClose = type === 'outside' ? rng() * 0.2 + 0.3 : null;
     const revenue = Math.floor(rng() * 400000) + 80000;
     const avgCallsPerLead = Math.floor(rng() * 4) + 2;
     const cancellationRate = rng() * 0.15 + 0.05;
 
+    // Outside reps: true net close calculation
+    let runs = null, closedWon = null, csm = null, csmCloseRate = null, projectedCloses = null, trueNetCloseRate = null;
+    if (type === 'outside') {
+      runs = totalLeads;
+      closedWon = Math.floor(runs * (rng() * 0.25 + 0.1));
+      csm = Math.floor(rng() * Math.max(runs * 0.2, 1)) + (runs > 20 ? 1 : 0);
+      csmCloseRate = rng() * 0.4 + 0.3;
+      projectedCloses = closedWon + Math.round(csm * csmCloseRate);
+      trueNetCloseRate = projectedCloses / runs;
+    }
+
     return {
-      ...rep, totalLeads, leadToSet, setToSit, sitToClose,
+      ...rep, totalLeads, leadToSet, setToSit,
+      runs, closedWon, csm, csmCloseRate, projectedCloses, trueNetCloseRate,
       revenue, avgCallsPerLead, cancellationRate,
       trend: rng() > 0.5 ? 'up' : 'down',
       score: Math.floor(rng() * 40) + 60
@@ -724,14 +739,20 @@ function LeadSourcesView({ data }) {
                       Outside Reps on {item.source}
                     </div>
                     <div style={{ fontSize: '12px' }}>
-                      <div style={{ display: 'grid', gridTemplateColumns: '2fr 0.8fr 0.8fr 0.8fr', padding: '8px 14px', color: T.dim, borderBottom: `1px solid ${T.border}` }}>
-                        <div>Rep</div><div style={{ textAlign: 'center' }}>Runs</div><div style={{ textAlign: 'center' }}>Net %</div><div style={{ textAlign: 'center' }}>Cancel %</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1.8fr 0.6fr 0.6fr 0.5fr 0.6fr 0.8fr 0.6fr', padding: '8px 14px', color: T.dim, borderBottom: `1px solid ${T.border}` }}>
+                        <div>Rep</div><div style={{ textAlign: 'center' }}>Runs</div><div style={{ textAlign: 'center' }}>Won</div><div style={{ textAlign: 'center' }}>CSMs</div><div style={{ textAlign: 'center' }}>Proj</div><div style={{ textAlign: 'center' }}>True Net %</div><div style={{ textAlign: 'center' }}>Cxl %</div>
                       </div>
                       {item.repsBySource.outsidePerf.map(r => (
-                        <div key={r.name} style={{ display: 'grid', gridTemplateColumns: '2fr 0.8fr 0.8fr 0.8fr', padding: '6px 14px', borderBottom: `1px solid ${T.border}` }}>
-                          <div style={{ color: T.text, fontSize: '13px' }}>{r.name}</div>
+                        <div key={r.name} style={{ display: 'grid', gridTemplateColumns: '1.8fr 0.6fr 0.6fr 0.5fr 0.6fr 0.8fr 0.6fr', padding: '6px 14px', borderBottom: `1px solid ${T.border}` }}>
+                          <div style={{ color: T.text, fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            {r.name}
+                            {(r.role === 'Closer' || r.role === 'Closer+GTR') && <Badge color={T.blue}>Closer</Badge>}
+                          </div>
                           <div style={{ textAlign: 'center' }}><Mono>{r.runs}</Mono></div>
-                          <div style={{ textAlign: 'center' }}><Pct value={r.netCloseRate} good={0.35} warning={0.25} /></div>
+                          <div style={{ textAlign: 'center' }}><Mono>{r.closedWon}</Mono></div>
+                          <div style={{ textAlign: 'center' }}><Mono color={T.blue}>{r.csm}</Mono></div>
+                          <div style={{ textAlign: 'center' }}><Mono color={T.accent}>{r.projectedCloses}</Mono></div>
+                          <div style={{ textAlign: 'center' }}><Pct value={r.trueNetCloseRate} good={0.35} warning={0.25} /></div>
                           <div style={{ textAlign: 'center' }}><Pct value={r.cancelRate} good={0.10} warning={0.18} /></div>
                         </div>
                       ))}
@@ -769,6 +790,75 @@ function LeadSourcesView({ data }) {
                     {insights.length === 0 && (
                       <div style={{ fontSize: '13px', color: T.muted }}>No significant flags for this source — performing within expected ranges.</div>
                     )}
+                  </div>
+                </div>
+
+                {/* Depth Chart — who should get the most leads from this source by market */}
+                <div style={{ marginTop: '20px', padding: '16px', borderRadius: '6px', border: `1px solid ${T.borderLight}`, background: T.surface }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
+                    <Users size={14} color={T.blue} />
+                    <span style={{ fontSize: '12px', fontWeight: '600', color: T.blue, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                      Depth Chart — Priority Assignment by Market
+                    </span>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                    {/* Outside depth chart — ranked by true net close % */}
+                    <div>
+                      <div style={{ fontSize: '11px', color: T.muted, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '10px' }}>
+                        Outside Sales — by True Net Close %
+                      </div>
+                      {(() => {
+                        const byMarket = {};
+                        item.repsBySource.outsidePerf.forEach(r => {
+                          if (!byMarket[r.market]) byMarket[r.market] = [];
+                          byMarket[r.market].push(r);
+                        });
+                        Object.values(byMarket).forEach(arr => arr.sort((a, b) => b.trueNetCloseRate - a.trueNetCloseRate));
+                        return Object.entries(byMarket).map(([market, reps]) => (
+                          <div key={market} style={{ marginBottom: '10px' }}>
+                            <div style={{ fontSize: '12px', color: T.accent, fontWeight: '500', marginBottom: '4px' }}>{market}</div>
+                            {reps.map((r, ri) => (
+                              <div key={r.name} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '3px 0', fontSize: '13px' }}>
+                                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '11px', color: ri === 0 ? T.green : T.dim, width: '18px' }}>#{ri + 1}</span>
+                                <span style={{ color: ri === 0 ? T.text : T.muted, fontWeight: ri === 0 ? '500' : '400' }}>{r.name}</span>
+                                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '12px', color: getColor(r.trueNetCloseRate, 0.35, 0.25), marginLeft: 'auto' }}>
+                                  {(r.trueNetCloseRate * 100).toFixed(0)}%
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        ));
+                      })()}
+                    </div>
+                    {/* Inside depth chart — ranked by contact-to-sit rate */}
+                    <div>
+                      <div style={{ fontSize: '11px', color: T.muted, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '10px' }}>
+                        Inside Sales — by Contact to Sit Rate
+                      </div>
+                      {(() => {
+                        const byMarket = {};
+                        item.repsBySource.insidePerf.forEach(r => {
+                          const contactToSit = r.setRate * r.sitRate;
+                          if (!byMarket[r.market]) byMarket[r.market] = [];
+                          byMarket[r.market].push({ ...r, contactToSit });
+                        });
+                        Object.values(byMarket).forEach(arr => arr.sort((a, b) => b.contactToSit - a.contactToSit));
+                        return Object.entries(byMarket).map(([market, reps]) => (
+                          <div key={market} style={{ marginBottom: '10px' }}>
+                            <div style={{ fontSize: '12px', color: T.accent, fontWeight: '500', marginBottom: '4px' }}>{market}</div>
+                            {reps.map((r, ri) => (
+                              <div key={r.name} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '3px 0', fontSize: '13px' }}>
+                                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '11px', color: ri === 0 ? T.green : T.dim, width: '18px' }}>#{ri + 1}</span>
+                                <span style={{ color: ri === 0 ? T.text : T.muted, fontWeight: ri === 0 ? '500' : '400' }}>{r.name}</span>
+                                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '12px', color: getColor(r.contactToSit, 0.25, 0.15), marginLeft: 'auto' }}>
+                                  {(r.contactToSit * 100).toFixed(0)}%
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        ));
+                      })()}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -840,26 +930,34 @@ function RepPerformanceView({ insideData, outsideData }) {
       <div style={{ background: T.surface, borderRadius: '8px', overflow: 'hidden', border: `1px solid ${T.border}` }}>
         <div style={{
           display: 'grid',
-          gridTemplateColumns: repType === 'inside' ? '2fr 1fr 1fr 1fr 1fr 1fr 0.8fr 0.8fr' : '2fr 1fr 1fr 1fr 1fr 1fr 0.8fr 0.8fr',
+          gridTemplateColumns: repType === 'inside' ? '2fr 1fr 1fr 1fr 1fr 0.8fr 0.8fr' : '1.8fr 0.8fr 0.7fr 0.6fr 0.5fr 0.6fr 0.8fr 0.6fr 0.8fr',
           padding: '14px 20px', borderBottom: `1px solid ${T.border}`, backgroundColor: T.bg,
           fontSize: '12px', fontWeight: '600', color: T.muted, textTransform: 'uppercase', letterSpacing: '0.5px'
         }}>
           <div>Rep</div>
           <div style={{ textAlign: 'center' }}>Market</div>
-          <div style={{ textAlign: 'center' }}>Leads</div>
-          <div style={{ textAlign: 'center' }}>{repType === 'inside' ? 'L→Set' : 'Sit→Close'}</div>
-          <div style={{ textAlign: 'center' }}>Revenue</div>
-          <div style={{ textAlign: 'center' }}>Cancel %</div>
-          <div style={{ textAlign: 'center' }}>Score</div>
-          <div style={{ textAlign: 'center' }}>Trend</div>
+          {repType === 'inside' ? (
+            <><div style={{ textAlign: 'center' }}>Leads</div>
+            <div style={{ textAlign: 'center' }}>L→Set</div>
+            <div style={{ textAlign: 'center' }}>Revenue</div>
+            <div style={{ textAlign: 'center' }}>Score</div>
+            <div style={{ textAlign: 'center' }}>Trend</div></>
+          ) : (
+            <><div style={{ textAlign: 'center' }}>Runs</div>
+            <div style={{ textAlign: 'center' }}>Won</div>
+            <div style={{ textAlign: 'center' }}>CSMs</div>
+            <div style={{ textAlign: 'center' }}>Proj</div>
+            <div style={{ textAlign: 'center' }}>True Net %</div>
+            <div style={{ textAlign: 'center' }}>Cxl %</div>
+            <div style={{ textAlign: 'center' }}>Revenue</div></>
+          )}
         </div>
 
         {filtered.map((rep, idx) => {
-          const conversionVal = repType === 'inside' ? rep.leadToSet : rep.sitToClose;
           return (
             <div key={rep.name} style={{
               display: 'grid',
-              gridTemplateColumns: repType === 'inside' ? '2fr 1fr 1fr 1fr 1fr 1fr 0.8fr 0.8fr' : '2fr 1fr 1fr 1fr 1fr 1fr 0.8fr 0.8fr',
+              gridTemplateColumns: repType === 'inside' ? '2fr 1fr 1fr 1fr 1fr 0.8fr 0.8fr' : '1.8fr 0.8fr 0.7fr 0.6fr 0.5fr 0.6fr 0.8fr 0.6fr 0.8fr',
               padding: '14px 20px',
               borderBottom: idx < filtered.length - 1 ? `1px solid ${T.border}` : 'none',
               transition: 'background-color 0.15s'
@@ -870,29 +968,27 @@ function RepPerformanceView({ insideData, outsideData }) {
               <div style={{ fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                 {rep.name}
                 {rep.role === 'Manager' && <Badge color={T.purple}>MGR</Badge>}
-                {rep.role === 'PT' && <Badge color={T.dim}>PT</Badge>}
                 {(rep.role === 'Closer' || rep.role === 'Closer+GTR') && <Badge color={T.blue}>Closer</Badge>}
                 {rep.score >= 90 && <Badge color={T.green}>Star</Badge>}
               </div>
               <div style={{ textAlign: 'center', fontSize: '13px', color: T.muted }}>{rep.market}</div>
-              <div style={{ textAlign: 'center' }}><Mono>{rep.totalLeads}</Mono></div>
-              <div style={{ textAlign: 'center' }}>
-                {conversionVal != null
-                  ? <Pct value={conversionVal} good={repType === 'inside' ? 0.35 : 0.4} warning={repType === 'inside' ? 0.25 : 0.3} />
-                  : <span style={{ color: T.dim }}>—</span>
-                }
-              </div>
-              <div style={{ textAlign: 'center' }}><Mono color={T.green}>${(rep.revenue / 1000).toFixed(0)}k</Mono></div>
-              <div style={{ textAlign: 'center' }}><Pct value={rep.cancellationRate} good={0.08} warning={0.12} /></div>
-              <div style={{ textAlign: 'center' }}>
-                <span style={{
-                  fontFamily: "'JetBrains Mono', monospace", fontSize: '14px', fontWeight: '600',
-                  color: rep.score >= 85 ? T.green : rep.score >= 70 ? T.accent : T.red
-                }}>
-                  {rep.score}
-                </span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'center' }}><TrendIcon trend={rep.trend} /></div>
+              {repType === 'inside' ? (
+                <><div style={{ textAlign: 'center' }}><Mono>{rep.totalLeads}</Mono></div>
+                <div style={{ textAlign: 'center' }}><Pct value={rep.leadToSet} good={0.35} warning={0.25} /></div>
+                <div style={{ textAlign: 'center' }}><Mono color={T.green}>${(rep.revenue / 1000).toFixed(0)}k</Mono></div>
+                <div style={{ textAlign: 'center' }}>
+                  <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '14px', fontWeight: '600', color: rep.score >= 85 ? T.green : rep.score >= 70 ? T.accent : T.red }}>{rep.score}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'center' }}><TrendIcon trend={rep.trend} /></div></>
+              ) : (
+                <><div style={{ textAlign: 'center' }}><Mono>{rep.runs}</Mono></div>
+                <div style={{ textAlign: 'center' }}><Mono>{rep.closedWon}</Mono></div>
+                <div style={{ textAlign: 'center' }}><Mono color={T.blue}>{rep.csm}</Mono></div>
+                <div style={{ textAlign: 'center' }}><Mono color={T.accent}>{rep.projectedCloses}</Mono></div>
+                <div style={{ textAlign: 'center' }}><Pct value={rep.trueNetCloseRate} good={0.35} warning={0.25} /></div>
+                <div style={{ textAlign: 'center' }}><Pct value={rep.cancellationRate} good={0.10} warning={0.18} /></div>
+                <div style={{ textAlign: 'center' }}><Mono color={T.green}>${(rep.revenue / 1000).toFixed(0)}k</Mono></div></>
+              )}
             </div>
           );
         })}
