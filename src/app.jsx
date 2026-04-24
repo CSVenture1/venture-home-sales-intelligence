@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react';
-import { Search, ChevronDown, ChevronUp, TrendingUp, TrendingDown, AlertTriangle, BarChart3, Users, MapPin, Zap, Filter, X } from 'lucide-react';
+import { useState, useMemo, useEffect } from 'react';
+import { Search, ChevronDown, ChevronUp, TrendingUp, TrendingDown, AlertTriangle, BarChart3, Users, MapPin, Zap, Filter, X, Phone, Clock, Home, DollarSign, Calendar, Navigation, Star, CheckCircle } from 'lucide-react';
 
 // ─── Theme ───────────────────────────────────────────────────────────────────
 const T = {
@@ -1171,325 +1171,366 @@ function MarketOverviewView({ data }) {
   );
 }
 
-// ─── Appointment Assignment Intelligence ─────────────────────────────────────
-// Composite scoring: Performance (45%) + Eligibility (25%) + Distance (15%) + Availability (15%)
-// Recommends which outside rep should run a given appointment
+// ─── IS Smart Assignments ────────────────────────────────────────────────────
+// Landing page for inside sales reps booking appointments in real-time.
+// Shows customer info, time slot selection, and ranked recommended outside reps.
 
-function generateRepDistances(market) {
-  // Simulated distances (miles) for each rep from a central appointment location in the market
-  const rng = seededRandom(market.length * 419 + 73);
-  const marketReps = OUTSIDE_REPS.filter(r => r.market === market);
-  return marketReps.map(r => {
-    const base = r.market === market ? rng() * 25 + 3 : rng() * 60 + 30;
-    return { name: r.name, distance: Math.round(base * 10) / 10 };
-  });
-}
+const SAMPLE_CUSTOMERS = [
+  { name: "Sarah Martinez", phone: "(555) 234-7890", bill: 240, address: "1425 Oak Street", city: "Stamford", state: "CT", zip: "06901", source: "Modernize", prevInquiries: 3, lastContact: "March 2024", status: "Warm - Previous Interest" },
+  { name: "Robert Chen", phone: "(555) 891-3240", bill: 310, address: "87 Maple Avenue", city: "Albany", state: "NY", zip: "12203", source: "Referral", prevInquiries: 1, lastContact: "April 2024", status: "Hot - Referral" },
+  { name: "Jessica Thompson", phone: "(555) 445-6712", bill: 185, address: "302 Pine Road", city: "Newark", state: "NJ", zip: "07102", source: "Energy Bill Cruncher", prevInquiries: 2, lastContact: "Feb 2024", status: "Warm - Callback" },
+  { name: "David Kowalski", phone: "(555) 328-9901", bill: 275, address: "14 Harbor View Dr", city: "Portland", state: "ME", zip: "04101", source: "SolarReviews", prevInquiries: 0, lastContact: "New Lead", status: "New - Inbound" },
+  { name: "Maria Gonzalez", phone: "(555) 672-1185", bill: 220, address: "509 Elm Street", city: "Worcester", state: "MA", zip: "01608", source: "Clean Energy Experts", prevInquiries: 4, lastContact: "Jan 2024", status: "Warm - Multiple Touches" },
+  { name: "James Wilson", phone: "(555) 993-4478", bill: 290, address: "221 Sunset Blvd", city: "Baltimore", state: "MD", zip: "21201", source: "Adnet LLC", prevInquiries: 1, lastContact: "March 2024", status: "Warm - Previous Interest" },
+];
+
+const SAMPLE_INTERACTIONS = [
+  [
+    { type: "Call", date: "Mar 15, 2024", note: "Interested but wanted to wait until summer", rep: "Cortney Jetter" },
+    { type: "Appointment", date: "Jan 8, 2024", note: "Met at home, concerned about financing options", rep: "Max McNamara" },
+    { type: "Call", date: "Oct 22, 2023", note: "Initial inquiry, requested info packet", rep: "David Hole" },
+  ],
+  [
+    { type: "Call", date: "Apr 2, 2024", note: "Referred by neighbor, very interested", rep: "Chris Scaltro" },
+    { type: "Call", date: "Mar 28, 2024", note: "Left voicemail, neighbor has solar", rep: "Chris Scaltro" },
+  ],
+  [
+    { type: "Call", date: "Feb 14, 2024", note: "Wants to reduce $185/mo bill, asked about timeline", rep: "Adrienne Sadzinski" },
+    { type: "Appointment", date: "Dec 5, 2023", note: "No-show, rescheduled for Jan", rep: "Joe MacKinnon" },
+    { type: "Call", date: "Nov 20, 2023", note: "First contact, interested in savings", rep: "Richard Anderson" },
+  ],
+  [
+    { type: "Call", date: "Apr 10, 2024", note: "New inbound from SolarReviews, high intent", rep: "Alex Ives" },
+  ],
+  [
+    { type: "Call", date: "Jan 30, 2024", note: "4th touch, ready to schedule appointment", rep: "Michael Freedman" },
+    { type: "Call", date: "Dec 12, 2023", note: "Follow-up, still comparing quotes", rep: "Lee Rogers" },
+    { type: "Appointment", date: "Oct 18, 2023", note: "Ran appointment, wanted to think it over", rep: "Kaya Ulcay" },
+    { type: "Call", date: "Sep 5, 2023", note: "Initial inquiry, high electric bill", rep: "Gerald Williams" },
+  ],
+  [
+    { type: "Call", date: "Mar 20, 2024", note: "Interested in Tesla Power Wall add-on", rep: "Zachary Deraedt" },
+    { type: "Call", date: "Feb 8, 2024", note: "First contact from Adnet, qualified lead", rep: "Tyler Blankenship" },
+  ],
+];
+
+// Map states to markets
+const STATE_TO_MARKET = { CT: "CT", NY: "NY West", NJ: "NJ", ME: "ME/NH", NH: "ME/NH", MA: "MA/RI", RI: "MA/RI", MD: "MD" };
+
+// Rep specialties / strengths (simulated tags)
+const REP_TAGS = {};
+OUTSIDE_REPS.forEach((r, i) => {
+  const rng = seededRandom(i * 577 + 99);
+  const allTags = ["High-income", "Financing", "First-time buyers", "Small systems", "Large systems", "Referrals", "Callbacks", "Power Wall", "High bill"];
+  const t1 = allTags[Math.floor(rng() * allTags.length)];
+  let t2 = allTags[Math.floor(rng() * allTags.length)];
+  while (t2 === t1) t2 = allTags[Math.floor(rng() * allTags.length)];
+  REP_TAGS[r.name] = [t1, t2];
+});
+
+// Rep home base cities (simulated)
+const MARKET_CITIES = {
+  "NY West": ["Rochester", "Buffalo", "Syracuse", "Ithaca", "Utica", "Canandaigua", "Batavia"],
+  "NY East": ["Yonkers", "White Plains", "New Rochelle", "Mount Vernon", "Poughkeepsie", "Newburgh", "Kingston", "Middletown", "Beacon"],
+  "NJ": ["Newark", "Jersey City", "Paterson", "Trenton", "Edison"],
+  "CT": ["Stamford", "Hartford", "New Haven", "Bridgeport", "Waterbury", "Danbury", "Norwalk", "Greenwich", "Milford"],
+  "MA/RI": ["Boston", "Worcester", "Springfield", "Cambridge", "Providence", "Lowell", "Quincy", "Brockton"],
+  "ME/NH": ["Portland", "Bangor", "Lewiston", "Manchester", "Nashua", "Concord", "Dover", "Augusta", "Biddeford", "Scarborough"],
+  "MD": ["Baltimore", "Annapolis", "Frederick", "Rockville", "Columbia", "Silver Spring", "Towson"],
+};
 
 function AppointmentAssignmentView({ leadSourceData, outsideRepData }) {
-  const [selectedSource, setSelectedSource] = useState(LEAD_SOURCES[0]);
-  const [selectedMarket, setSelectedMarket] = useState(MARKETS[0]);
-  const [weightPerf, setWeightPerf] = useState(45);
-  const [weightElig, setWeightElig] = useState(25);
-  const [weightDist, setWeightDist] = useState(15);
-  const [weightAvail, setWeightAvail] = useState(15);
+  const [customerIdx, setCustomerIdx] = useState(0);
+  const [selectedSlot, setSelectedSlot] = useState(null);
+  const [callSeconds, setCallSeconds] = useState(154);
+  const [bookedRep, setBookedRep] = useState(null);
 
+  const customer = SAMPLE_CUSTOMERS[customerIdx];
+  const interactions = SAMPLE_INTERACTIONS[customerIdx] || [];
+  const market = STATE_TO_MARKET[customer.state] || "CT";
+
+  // Timer
+  useEffect(() => {
+    const interval = setInterval(() => setCallSeconds(s => s + 1), 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const formatTime = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+
+  // Time slots
+  const timeSlots = ["10:00 AM", "11:30 AM", "2:00 PM", "4:30 PM", "6:00 PM", "7:00 PM"];
+
+  // Rank outside reps for this customer's market
   const rankings = useMemo(() => {
-    // Find the lead source data to check eligibility
-    const sourceData = leadSourceData.find(d => d.source === selectedSource);
+    const sourceData = leadSourceData.find(d => d.source === customer.source);
     const eligibleNames = sourceData ? new Set(sourceData.repsBySource.outsidePerf.map(r => r.name)) : new Set();
-
-    // Get reps in the selected market
-    const marketReps = OUTSIDE_REPS.filter(r => r.market === selectedMarket);
-    const distances = generateRepDistances(selectedMarket);
-    const distMap = {};
-    distances.forEach(d => { distMap[d.name] = d.distance; });
-
-    // Get overall rep data for performance metrics
+    const marketReps = OUTSIDE_REPS.filter(r => r.market === market);
     const repDataMap = {};
     outsideRepData.forEach(r => { repDataMap[r.name] = r; });
-
-    // Also get per-source performance if available
     const sourceRepMap = {};
-    if (sourceData) {
-      sourceData.repsBySource.outsidePerf.forEach(r => { sourceRepMap[r.name] = r; });
-    }
+    if (sourceData) sourceData.repsBySource.outsidePerf.forEach(r => { sourceRepMap[r.name] = r; });
 
-    // Simulated availability (appointments today / capacity)
-    const rng = seededRandom(selectedSource.length * 311 + selectedMarket.length * 47);
+    const rng = seededRandom(customer.name.length * 311 + market.length * 47);
+    const cities = MARKET_CITIES[market] || ["Unknown"];
 
     return marketReps.map(rep => {
       const repData = repDataMap[rep.name] || {};
       const sourceRep = sourceRepMap[rep.name];
       const isEligible = eligibleNames.has(rep.name);
-      const dist = distMap[rep.name] || 30;
-
-      // Performance score (0-100): based on true net close % and cancel rate
       const trueNet = sourceRep ? sourceRep.trueNetCloseRate : (repData.trueNetCloseRate || 0.2);
       const cancelRate = sourceRep ? sourceRep.cancelRate : (repData.cancellationRate || 0.15);
-      const perfScore = Math.min(100, Math.max(0,
-        (trueNet / 0.5) * 70 + // Up to 70 pts for close rate
-        ((1 - cancelRate) / 1) * 30 // Up to 30 pts for low cancels
-      ));
-
-      // Eligibility score: 100 if eligible, 20 if not (still possible, just penalized)
-      const eligScore = isEligible ? 100 : 20;
-
-      // Distance score: closer = higher (inverse scale, max at 0 mi, 0 at 50+ mi)
-      const distScore = Math.max(0, Math.min(100, (1 - dist / 50) * 100));
-
-      // Availability score: simulated load factor
+      const driveTime = Math.floor(rng() * 35) + 5; // 5-40 min
+      const homeCity = cities[Math.floor(rng() * cities.length)];
       const todayAppts = Math.floor(rng() * 4);
-      const capacity = 4;
-      const availScore = Math.max(0, ((capacity - todayAppts) / capacity) * 100);
+      const overallRate = Math.round(trueNet * 100);
 
-      // Composite score (weighted)
-      const totalWeight = weightPerf + weightElig + weightDist + weightAvail;
-      const composite = (
-        perfScore * (weightPerf / totalWeight) +
-        eligScore * (weightElig / totalWeight) +
-        distScore * (weightDist / totalWeight) +
-        availScore * (weightAvail / totalWeight)
-      );
+      // Composite
+      const perfScore = Math.min(100, (trueNet / 0.5) * 70 + ((1 - cancelRate)) * 30);
+      const eligScore = isEligible ? 100 : 20;
+      const distScore = Math.max(0, (1 - driveTime / 45) * 100);
+      const availScore = Math.max(0, ((4 - todayAppts) / 4) * 100);
+      const composite = Math.round(perfScore * 0.45 + eligScore * 0.25 + distScore * 0.15 + availScore * 0.15);
 
       return {
-        name: rep.name,
-        role: rep.role,
-        market: rep.market,
-        trueNetCloseRate: trueNet,
-        cancelRate,
-        perfScore: Math.round(perfScore),
-        isEligible,
-        eligScore,
-        distance: dist,
-        distScore: Math.round(distScore),
-        todayAppts,
-        capacity,
-        availScore: Math.round(availScore),
-        composite: Math.round(composite * 10) / 10,
-        sourceSpecific: !!sourceRep,
+        name: rep.name, role: rep.role, market: rep.market,
+        trueNet, cancelRate, overallRate, driveTime, homeCity,
+        todayAppts, isEligible, composite,
+        tags: REP_TAGS[rep.name] || [],
         runs: sourceRep ? sourceRep.runs : (repData.runs || 0),
         closedWon: sourceRep ? sourceRep.closedWon : (repData.closedWon || 0),
-        csm: sourceRep ? sourceRep.csm : (repData.csm || 0),
-        projectedCloses: sourceRep ? sourceRep.projectedCloses : (repData.projectedCloses || 0),
       };
     }).sort((a, b) => b.composite - a.composite);
-  }, [selectedSource, selectedMarket, leadSourceData, outsideRepData, weightPerf, weightElig, weightDist, weightAvail]);
+  }, [customer, market, leadSourceData, outsideRepData]);
 
-  const topPick = rankings[0];
-  const eligibleCount = rankings.filter(r => r.isEligible).length;
-  const avgComposite = rankings.length > 0 ? rankings.reduce((s, r) => s + r.composite, 0) / rankings.length : 0;
+  // Style constants
+  const card = { background: T.surface, borderRadius: '10px', border: `1px solid ${T.border}`, padding: '24px' };
+  const selectStyle = {
+    background: T.surface, border: `1px solid ${T.border}`, borderRadius: '6px',
+    color: T.text, padding: '8px 12px', fontSize: '14px', fontFamily: "'Outfit', sans-serif"
+  };
 
   return (
     <div>
-      {/* KPIs */}
-      <div style={{ display: 'flex', gap: '16px', marginBottom: '24px', flexWrap: 'wrap' }}>
-        <KpiCard label="Recommended Rep" value={topPick?.name || '—'} subtext={`Score: ${topPick?.composite || 0}`} color={T.accent} icon={Zap} />
-        <KpiCard label="Reps in Market" value={rankings.length} subtext={`${eligibleCount} eligible for source`} icon={Users} />
-        <KpiCard label="Avg Composite" value={avgComposite.toFixed(1)} color={avgComposite > 65 ? T.green : avgComposite > 45 ? T.accent : T.red} icon={BarChart3} />
-        <KpiCard label="Top True Net %" value={topPick ? `${(topPick.trueNetCloseRate * 100).toFixed(0)}%` : '—'} color={topPick && topPick.trueNetCloseRate > 0.35 ? T.green : T.accent} icon={TrendingUp} />
-      </div>
-
-      {/* Controls */}
-      <div style={{ display: 'flex', gap: '12px', marginBottom: '20px', alignItems: 'center', flexWrap: 'wrap' }}>
-        <div>
-          <label style={{ fontSize: '11px', color: T.dim, textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: '4px' }}>Lead Source</label>
-          <select value={selectedSource} onChange={e => setSelectedSource(e.target.value)} style={{
-            background: T.surface, border: `1px solid ${T.border}`, borderRadius: '6px',
-            color: T.text, padding: '8px 12px', fontSize: '14px', fontFamily: "'Outfit', sans-serif", minWidth: '200px'
-          }}>
-            {LEAD_SOURCES.map(s => <option key={s} value={s}>{s}</option>)}
+      {/* Header bar */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <h2 style={{ fontSize: '22px', fontWeight: '700', margin: 0, color: T.text }}>IS Smart Assignments</h2>
+          <select value={customerIdx} onChange={e => { setCustomerIdx(Number(e.target.value)); setBookedRep(null); setSelectedSlot(null); }} style={selectStyle}>
+            {SAMPLE_CUSTOMERS.map((c, i) => <option key={i} value={i}>{c.name} — {c.city}, {c.state}</option>)}
           </select>
         </div>
-        <div>
-          <label style={{ fontSize: '11px', color: T.dim, textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: '4px' }}>Market</label>
-          <select value={selectedMarket} onChange={e => setSelectedMarket(e.target.value)} style={{
-            background: T.surface, border: `1px solid ${T.border}`, borderRadius: '6px',
-            color: T.text, padding: '8px 12px', fontSize: '14px', fontFamily: "'Outfit', sans-serif"
-          }}>
-            {MARKETS.map(m => <option key={m} value={m}>{m}</option>)}
-          </select>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: T.green, animation: 'pulse 2s infinite' }} />
+          <span style={{ fontSize: '14px', color: T.muted }}>Call started <span style={{ fontFamily: "'JetBrains Mono', monospace", color: T.text }}>{formatTime(callSeconds)}</span> ago</span>
         </div>
       </div>
 
-      {/* Weight Sliders */}
-      <div style={{
-        background: T.surface, borderRadius: '8px', padding: '16px 20px', marginBottom: '20px',
-        border: `1px solid ${T.border}`, display: 'flex', gap: '24px', flexWrap: 'wrap', alignItems: 'center'
-      }}>
-        <span style={{ fontSize: '12px', color: T.muted, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Scoring Weights:</span>
-        {[
-          { label: 'Performance', value: weightPerf, set: setWeightPerf, color: T.green },
-          { label: 'Eligibility', value: weightElig, set: setWeightElig, color: T.blue },
-          { label: 'Distance', value: weightDist, set: setWeightDist, color: T.accent },
-          { label: 'Availability', value: weightAvail, set: setWeightAvail, color: T.purple },
-        ].map(w => (
-          <div key={w.label} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ fontSize: '12px', color: w.color, minWidth: '85px' }}>{w.label}</span>
-            <input type="range" min="0" max="100" value={w.value} onChange={e => w.set(Number(e.target.value))}
-              style={{ width: '80px', accentColor: w.color }} />
-            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '12px', color: T.text, minWidth: '28px' }}>{w.value}%</span>
-          </div>
-        ))}
-      </div>
+      {/* Two-column layout */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', alignItems: 'start' }}>
 
-      {/* Recommendation Card */}
-      {topPick && (
-        <div style={{
-          background: `linear-gradient(135deg, ${T.green}12, ${T.accent}08)`,
-          borderRadius: '8px', padding: '20px', marginBottom: '20px',
-          border: `1px solid ${T.green}40`
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
-            <Zap size={18} color={T.accent} />
-            <span style={{ fontSize: '16px', fontWeight: '600', color: T.accent }}>
-              RECOMMENDED ASSIGNMENT
-            </span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '24px', flexWrap: 'wrap' }}>
-            <div>
-              <div style={{ fontSize: '24px', fontWeight: '600', color: T.text }}>{topPick.name}</div>
-              <div style={{ display: 'flex', gap: '8px', marginTop: '6px', alignItems: 'center' }}>
-                {(topPick.role === 'Closer' || topPick.role === 'Closer+GTR') && <Badge color={T.blue}>Closer</Badge>}
-                {topPick.isEligible && <Badge color={T.green}>Eligible</Badge>}
-                {!topPick.isEligible && <Badge color={T.red}>Not Eligible</Badge>}
-                <Badge color={T.accent}>{topPick.market}</Badge>
+        {/* ── LEFT COLUMN ── */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+
+          {/* Customer Info Card */}
+          <div style={card}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '20px' }}>
+              <div style={{ width: '36px', height: '36px', borderRadius: '50%', border: `2px solid ${T.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Users size={18} color={T.muted} />
+              </div>
+              <span style={{ fontSize: '20px', fontWeight: '600', color: T.text }}>{customer.name}</span>
+              <Badge color={T.blue}>{customer.source}</Badge>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '20px' }}>
+              <div>
+                <div style={{ fontSize: '11px', color: T.dim, textTransform: 'uppercase', marginBottom: '4px' }}>Phone</div>
+                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '16px', color: T.text }}>{customer.phone}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: '11px', color: T.dim, textTransform: 'uppercase', marginBottom: '4px' }}>Electric Bill</div>
+                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '16px', color: T.green }}>${customer.bill}/month</div>
               </div>
             </div>
-            <div style={{ display: 'flex', gap: '20px', marginLeft: 'auto' }}>
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: '11px', color: T.dim, textTransform: 'uppercase', marginBottom: '4px' }}>Composite</div>
-                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '22px', fontWeight: '600', color: T.green }}>{topPick.composite}</div>
+
+            <div style={{ marginBottom: '20px' }}>
+              <div style={{ fontSize: '11px', color: T.dim, textTransform: 'uppercase', marginBottom: '4px' }}>Address</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <MapPin size={14} color={T.muted} />
+                <span style={{ fontSize: '15px', color: T.text }}>{customer.address}, {customer.city}, {customer.state} {customer.zip}</span>
               </div>
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: '11px', color: T.dim, textTransform: 'uppercase', marginBottom: '4px' }}>True Net %</div>
-                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '22px', fontWeight: '600', color: getColor(topPick.trueNetCloseRate, 0.35, 0.25) }}>{(topPick.trueNetCloseRate * 100).toFixed(0)}%</div>
+            </div>
+
+            {/* Stats row */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', padding: '14px 0 0', borderTop: `1px solid ${T.border}` }}>
+              <div>
+                <div style={{ fontSize: '11px', color: T.dim, textTransform: 'uppercase', marginBottom: '4px' }}>Previous Inquiries</div>
+                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '20px', fontWeight: '600', color: T.text }}>{customer.prevInquiries}</div>
               </div>
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: '11px', color: T.dim, textTransform: 'uppercase', marginBottom: '4px' }}>Distance</div>
-                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '22px', fontWeight: '600', color: T.accent }}>{topPick.distance}mi</div>
+              <div>
+                <div style={{ fontSize: '11px', color: T.dim, textTransform: 'uppercase', marginBottom: '4px' }}>Last Contact</div>
+                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '14px', color: T.text }}>{customer.lastContact}</div>
               </div>
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: '11px', color: T.dim, textTransform: 'uppercase', marginBottom: '4px' }}>Today</div>
-                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '22px', fontWeight: '600', color: topPick.todayAppts < 3 ? T.green : T.red }}>{topPick.todayAppts}/{topPick.capacity}</div>
+              <div>
+                <div style={{ fontSize: '11px', color: T.dim, textTransform: 'uppercase', marginBottom: '4px' }}>Status</div>
+                <div style={{ fontSize: '13px', fontWeight: '500', color: customer.status.includes('Hot') ? T.green : T.accent }}>{customer.status}</div>
               </div>
             </div>
           </div>
-          {/* Why this rep */}
-          <div style={{ marginTop: '14px', padding: '10px 12px', borderRadius: '4px', backgroundColor: T.surface, fontSize: '13px', lineHeight: '1.6', color: T.muted }}>
-            <span style={{ color: T.accent, fontWeight: '500' }}>Why:</span>{' '}
-            {topPick.name} scores highest with a composite of {topPick.composite} —
-            {topPick.perfScore >= 60 ? ` strong closing performance (${(topPick.trueNetCloseRate * 100).toFixed(0)}% true net close),` : ` moderate close rate (${(topPick.trueNetCloseRate * 100).toFixed(0)}% true net),`}
-            {topPick.isEligible ? ' eligible for this lead source,' : ' not currently eligible for this source (penalty applied),'}
-            {topPick.distance < 15 ? ` close proximity (${topPick.distance}mi),` : ` ${topPick.distance}mi from appointment,`}
-            {topPick.todayAppts <= 1 ? ' and has open availability today.' : ` and has ${topPick.capacity - topPick.todayAppts} remaining slots today.`}
-            {topPick.sourceSpecific && ` Has ${topPick.runs} runs on ${selectedSource} with ${topPick.closedWon} won + ${topPick.csm} CSMs.`}
+
+          {/* Interaction History */}
+          <div style={card}>
+            <h3 style={{ fontSize: '16px', fontWeight: '600', margin: '0 0 16px 0', color: T.text }}>Interaction History</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
+              {interactions.map((int, idx) => {
+                const typeColor = int.type === 'Appointment' ? T.green : int.type === 'Call' ? T.accent : T.blue;
+                return (
+                  <div key={idx} style={{ display: 'flex', gap: '14px', paddingBottom: idx < interactions.length - 1 ? '16px' : '0', position: 'relative' }}>
+                    {/* Timeline line */}
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '4px', flexShrink: 0 }}>
+                      <div style={{ width: '4px', height: '100%', backgroundColor: typeColor, borderRadius: '2px' }} />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                        <span style={{ fontSize: '15px', fontWeight: '600', color: T.text }}>{int.type}</span>
+                        <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '12px', color: T.dim }}>{int.date}</span>
+                      </div>
+                      <div style={{ fontSize: '14px', color: T.muted, marginBottom: '4px' }}>{int.note}</div>
+                      <div style={{ fontSize: '12px', color: T.dim }}>Rep: {int.rep}</div>
+                    </div>
+                  </div>
+                );
+              })}
+              {interactions.length === 0 && <div style={{ fontSize: '13px', color: T.dim }}>No prior interactions — new lead.</div>}
+            </div>
           </div>
         </div>
-      )}
 
-      {/* Full Rankings Table */}
-      <div style={{ background: T.surface, borderRadius: '8px', overflow: 'hidden', border: `1px solid ${T.border}` }}>
-        <div style={{
-          display: 'grid', gridTemplateColumns: '0.4fr 1.8fr 0.8fr 0.7fr 0.7fr 0.7fr 0.7fr 0.8fr',
-          padding: '14px 20px', borderBottom: `1px solid ${T.border}`, backgroundColor: T.bg,
-          fontSize: '12px', fontWeight: '600', color: T.muted, textTransform: 'uppercase', letterSpacing: '0.5px'
-        }}>
-          <div style={{ textAlign: 'center' }}>Rank</div>
-          <div>Rep</div>
-          <div style={{ textAlign: 'center' }}>Perf</div>
-          <div style={{ textAlign: 'center' }}>Elig</div>
-          <div style={{ textAlign: 'center' }}>Dist</div>
-          <div style={{ textAlign: 'center' }}>Avail</div>
-          <div style={{ textAlign: 'center' }}>True Net %</div>
-          <div style={{ textAlign: 'center' }}>Composite</div>
-        </div>
+        {/* ── RIGHT COLUMN ── */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
 
-        {rankings.map((rep, idx) => {
-          const tier = idx === 0 ? 'top' : rep.composite >= 60 ? 'good' : rep.composite >= 40 ? 'ok' : 'avoid';
-          const tierColors = { top: T.green, good: T.text, ok: T.accent, avoid: T.red };
-          const tierBg = { top: T.green + '08', good: 'transparent', ok: 'transparent', avoid: T.red + '06' };
-          return (
-            <div key={rep.name} style={{
-              display: 'grid', gridTemplateColumns: '0.4fr 1.8fr 0.8fr 0.7fr 0.7fr 0.7fr 0.7fr 0.8fr',
-              padding: '12px 20px',
-              borderBottom: idx < rankings.length - 1 ? `1px solid ${T.border}` : 'none',
-              backgroundColor: tierBg[tier],
-              transition: 'background-color 0.15s'
-            }}
-              onMouseEnter={e => e.currentTarget.style.backgroundColor = T.surfaceHover}
-              onMouseLeave={e => e.currentTarget.style.backgroundColor = tierBg[tier]}
-            >
-              <div style={{ textAlign: 'center', fontFamily: "'JetBrains Mono', monospace", fontSize: '14px', fontWeight: '600', color: idx === 0 ? T.green : T.dim }}>
-                #{idx + 1}
-              </div>
-              <div style={{ fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px', color: tierColors[tier] }}>
-                {rep.name}
-                {(rep.role === 'Closer' || rep.role === 'Closer+GTR') && <Badge color={T.blue}>Closer</Badge>}
-                {idx === 0 && <Badge color={T.green}>Best Pick</Badge>}
-                {!rep.isEligible && <span style={{ fontSize: '11px', color: T.red, fontWeight: '500' }}>NOT ELIG</span>}
-              </div>
-              {/* Score breakdown bars */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
-                <div style={{ width: '40px', height: '6px', backgroundColor: T.border, borderRadius: '3px', overflow: 'hidden' }}>
-                  <div style={{ width: `${rep.perfScore}%`, height: '100%', backgroundColor: T.green, borderRadius: '3px' }} />
-                </div>
-                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '11px', color: T.muted }}>{rep.perfScore}</span>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
-                <div style={{ width: '40px', height: '6px', backgroundColor: T.border, borderRadius: '3px', overflow: 'hidden' }}>
-                  <div style={{ width: `${rep.eligScore}%`, height: '100%', backgroundColor: rep.isEligible ? T.blue : T.red, borderRadius: '3px' }} />
-                </div>
-                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '11px', color: rep.isEligible ? T.blue : T.red }}>{rep.isEligible ? 'Y' : 'N'}</span>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
-                <div style={{ width: '40px', height: '6px', backgroundColor: T.border, borderRadius: '3px', overflow: 'hidden' }}>
-                  <div style={{ width: `${rep.distScore}%`, height: '100%', backgroundColor: T.accent, borderRadius: '3px' }} />
-                </div>
-                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '11px', color: T.muted }}>{rep.distance}mi</span>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
-                <div style={{ width: '40px', height: '6px', backgroundColor: T.border, borderRadius: '3px', overflow: 'hidden' }}>
-                  <div style={{ width: `${rep.availScore}%`, height: '100%', backgroundColor: T.purple, borderRadius: '3px' }} />
-                </div>
-                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '11px', color: T.muted }}>{rep.todayAppts}/{rep.capacity}</span>
-              </div>
-              <div style={{ textAlign: 'center' }}>
-                <Pct value={rep.trueNetCloseRate} good={0.35} warning={0.25} />
-              </div>
-              <div style={{ textAlign: 'center' }}>
-                <span style={{
-                  fontFamily: "'JetBrains Mono', monospace", fontSize: '16px', fontWeight: '700',
-                  color: rep.composite >= 65 ? T.green : rep.composite >= 45 ? T.accent : T.red
+          {/* Time Slot Selection */}
+          <div style={card}>
+            <h3 style={{ fontSize: '16px', fontWeight: '600', margin: '0 0 14px 0', color: T.text }}>Select Time Slot</h3>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+              {timeSlots.map(slot => (
+                <button key={slot} onClick={() => setSelectedSlot(slot)} style={{
+                  padding: '14px', borderRadius: '8px', fontSize: '15px', fontWeight: '500',
+                  fontFamily: "'JetBrains Mono', monospace", cursor: 'pointer', transition: 'all 0.15s',
+                  border: selectedSlot === slot ? `2px solid ${T.accent}` : `1px solid ${T.border}`,
+                  backgroundColor: selectedSlot === slot ? T.accent : T.bg,
+                  color: selectedSlot === slot ? T.bg : T.text,
                 }}>
-                  {rep.composite}
-                </span>
-              </div>
+                  {slot}
+                </button>
+              ))}
             </div>
-          );
-        })}
-      </div>
+          </div>
 
-      {/* Score Breakdown Legend */}
-      <div style={{
-        marginTop: '16px', background: T.surface, borderRadius: '8px', padding: '14px 20px',
-        border: `1px solid ${T.border}`, display: 'flex', gap: '24px', flexWrap: 'wrap', alignItems: 'center'
-      }}>
-        <span style={{ fontSize: '12px', color: T.muted, fontWeight: '600' }}>Score Components:</span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <div style={{ width: '12px', height: '6px', backgroundColor: T.green, borderRadius: '3px' }} />
-          <span style={{ fontSize: '12px', color: T.muted }}>Performance — true net close % + cancel rate</span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <div style={{ width: '12px', height: '6px', backgroundColor: T.blue, borderRadius: '3px' }} />
-          <span style={{ fontSize: '12px', color: T.muted }}>Eligibility — has worked this lead source before</span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <div style={{ width: '12px', height: '6px', backgroundColor: T.accent, borderRadius: '3px' }} />
-          <span style={{ fontSize: '12px', color: T.muted }}>Distance — proximity to appointment</span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <div style={{ width: '12px', height: '6px', backgroundColor: T.purple, borderRadius: '3px' }} />
-          <span style={{ fontSize: '12px', color: T.muted }}>Availability — remaining capacity today</span>
+          {/* Recommended Reps */}
+          <div style={card}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+              <div style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: T.green }} />
+              <h3 style={{ fontSize: '16px', fontWeight: '600', margin: 0, color: T.text }}>Recommended Reps</h3>
+            </div>
+
+            {/* Booked confirmation */}
+            {bookedRep && (
+              <div style={{
+                padding: '16px', borderRadius: '8px', marginBottom: '16px',
+                background: T.green + '15', border: `1px solid ${T.green}40`,
+                display: 'flex', alignItems: 'center', gap: '12px'
+              }}>
+                <CheckCircle size={22} color={T.green} />
+                <div>
+                  <div style={{ fontSize: '15px', fontWeight: '600', color: T.green }}>Appointment Booked</div>
+                  <div style={{ fontSize: '13px', color: T.muted }}>{bookedRep} — {selectedSlot || 'TBD'} — {customer.city}, {customer.state}</div>
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              {rankings.slice(0, 5).map((rep, idx) => (
+                <div key={rep.name} style={{
+                  background: T.bg, borderRadius: '10px', border: `1px solid ${T.border}`,
+                  padding: '18px', transition: 'border-color 0.15s',
+                  opacity: bookedRep && bookedRep !== rep.name ? 0.4 : 1,
+                }}
+                  onMouseEnter={e => e.currentTarget.style.borderColor = T.accent}
+                  onMouseLeave={e => e.currentTarget.style.borderColor = T.border}
+                >
+                  {/* Rep header */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <div style={{
+                        width: '28px', height: '28px', borderRadius: '50%',
+                        backgroundColor: idx === 0 ? T.green : idx === 1 ? T.accent : T.dim,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: '13px', fontWeight: '700', color: T.bg
+                      }}>
+                        {idx + 1}
+                      </div>
+                      <span style={{ fontSize: '17px', fontWeight: '600', color: T.text }}>{rep.name}</span>
+                      {(rep.role === 'Closer' || rep.role === 'Closer+GTR') && <Badge color={T.blue}>Closer</Badge>}
+                    </div>
+                    <span style={{
+                      fontFamily: "'JetBrains Mono', monospace", fontSize: '20px', fontWeight: '700',
+                      color: rep.composite >= 65 ? T.green : rep.composite >= 45 ? T.accent : T.red
+                    }}>
+                      {rep.composite}%
+                    </span>
+                  </div>
+
+                  {/* Stats row */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+                    <div>
+                      <div style={{ fontSize: '11px', color: T.dim, textTransform: 'uppercase', marginBottom: '2px' }}>Drive Time</div>
+                      <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '16px', fontWeight: '600', color: T.text }}>{rep.driveTime} min</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', color: T.dim, textTransform: 'uppercase', marginBottom: '2px' }}>From</div>
+                      <div style={{ fontSize: '14px', fontWeight: '500', color: T.text }}>{rep.homeCity}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', color: T.dim, textTransform: 'uppercase', marginBottom: '2px' }}>Overall Rate</div>
+                      <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '16px', fontWeight: '600', color: T.text }}>{rep.overallRate}%</div>
+                    </div>
+                  </div>
+
+                  {/* Tags */}
+                  <div style={{ display: 'flex', gap: '6px', marginBottom: '14px', flexWrap: 'wrap' }}>
+                    {rep.tags.map(tag => (
+                      <span key={tag} style={{
+                        padding: '3px 10px', borderRadius: '4px', fontSize: '12px',
+                        backgroundColor: T.border, color: T.muted
+                      }}>{tag}</span>
+                    ))}
+                    {!rep.isEligible && (
+                      <span style={{ padding: '3px 10px', borderRadius: '4px', fontSize: '12px', backgroundColor: T.red + '20', color: T.red }}>Not Eligible</span>
+                    )}
+                    {rep.todayAppts >= 3 && (
+                      <span style={{ padding: '3px 10px', borderRadius: '4px', fontSize: '12px', backgroundColor: T.red + '20', color: T.red }}>Full Today</span>
+                    )}
+                  </div>
+
+                  {/* Book button */}
+                  <button
+                    onClick={() => setBookedRep(rep.name)}
+                    disabled={!!bookedRep}
+                    style={{
+                      width: '100%', padding: '12px', borderRadius: '8px', border: 'none',
+                      fontSize: '15px', fontWeight: '600', cursor: bookedRep ? 'default' : 'pointer',
+                      fontFamily: "'Outfit', sans-serif",
+                      backgroundColor: bookedRep === rep.name ? T.green : T.accent,
+                      color: T.bg, opacity: bookedRep && bookedRep !== rep.name ? 0.3 : 1,
+                      transition: 'all 0.15s'
+                    }}
+                  >
+                    {bookedRep === rep.name ? 'Booked!' : `Book with ${rep.name.split(' ')[0]}`}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -1498,7 +1539,7 @@ function AppointmentAssignmentView({ leadSourceData, outsideRepData }) {
 
 // ─── Main App ────────────────────────────────────────────────────────────────
 function App() {
-  const [activeView, setActiveView] = useState('lead-sources');
+  const [activeView, setActiveView] = useState('apt-assignment');
 
   const leadSourceData = useMemo(() => generateLeadSourceData(), []);
   const insideRepData = useMemo(() => generateRepData(INSIDE_REPS, 'inside'), []);
@@ -1506,10 +1547,10 @@ function App() {
   const marketData = useMemo(() => generateMarketData(), []);
 
   const views = [
+    { id: 'apt-assignment', label: 'Smart Assignments', icon: Zap },
     { id: 'lead-sources', label: 'Lead Sources', icon: BarChart3 },
     { id: 'rep-performance', label: 'Rep Performance', icon: Users },
     { id: 'market-overview', label: 'Market Overview', icon: MapPin },
-    { id: 'apt-assignment', label: 'Apt Assignment Intel', icon: Zap }
   ];
 
   return (
